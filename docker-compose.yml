@@ -1,0 +1,131 @@
+version: '3.7'
+
+networks:
+#This isnt needed unless you need multiple containers to talk to each other
+  webcore:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.42.42.0/16
+
+services:
+  postgres-db:
+  #alpine versions of images tend to be more secure.
+      image: postgres:12.4-alpine
+      restart: always
+      container_name: postgres-alpine
+      hostname: postgres
+      environment:
+        POSTGRES_PASSWORD: '!QAZ2wsx'
+        POSTGRES_DB: appstore
+        POSTGRES_USER: ian
+        PGDATA: '/var/pg'
+      expose: 
+        - '8080'
+        - '5432'
+      ports:
+        - "8080:8080"
+        - "5432:5432"
+      volumes:
+        - .\volumes\pg_data:/var/pg:cached
+        - .\volumes\data_import:/app/data_import:cached
+      networks:
+        - webcore
+      security_opt:
+        - seccomp:unconfined
+        
+        
+  pgadmin-console:
+      image: dpage/pgadmin4
+      container_name: pgadmin-console
+      depends_on:
+        - postgres-db
+      environment:
+        PGADMIN_DEFAULT_EMAIL: admin@admin.com
+        PGADMIN_DEFAULT_PASSWORD: changeme
+        PGADMIN_LISTEN_PORT: 8088
+      expose:
+        - 8088
+      ports:
+        - "8088:8088"
+      networks:
+        - webcore
+      volumes:
+        - pgadmin:/root/.pgadmin  
+        - .\volumes\data_import:/data_import:cached
+
+
+  flask-api:
+    hostname: flask-api
+    build: ./services/flask-api/.
+    container_name: flask-api
+    restart: 'always'
+    expose: 
+      - '5000'
+    ports:
+      - '5000:5000'
+    env_file: 
+      - ./services/flask-api/secrets.env
+    environment:
+      TZ: America/New_York
+      FLASK_HOST: '0.0.0.0'
+      FLASK_PORT: 5000
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_DB:   appstore
+      DB_USER: ian
+      DB_PASS: '!QAZ2wsx'
+      DEBUG_FLASK: null
+      ENDPOINT: '/v1'
+      SMPLE: $SAMPLE
+    networks:
+      - webcore
+
+      
+  react-frontend:
+    hostname: react-frontend
+    depends_on:
+      - flask-api
+    container_name: react-frontend
+    environment:
+      CHOKIDAR_USEPOLLING: 'true'
+      HOSTNAME: react-frontend
+      # Only use this if nginx is not being used.
+      #REACT_APP_API_HOST: http://dashboard-api:5050/
+    build:
+      context: ./services/react-frontend/.
+      dockerfile: Dockerfile
+    expose:   
+      - 3000
+    ports:
+      - 3333:3000
+    volumes: 
+      - ./services/react-frontend:/usr/src/app:cached
+      - ./volumes/app/build:/usr/src/build:cached
+      - ./volumes/app/node_modules:/usr/src/node_modules:cached
+      #- ./app/:/usr/src/app:cached
+    networks:
+      - webcore
+
+
+  nginx:
+    container_name: nginx-router
+    hostname: nginx
+    build: ./services/nginx/
+    restart: 'always'
+    expose:
+      - 80
+    ports:
+      - 80:80
+    environment:
+      FLASK_PORT: 5000
+      API_ENDPOINT: '/api'
+    volumes: 
+      - ./volumes/app/build:/usr/share/nginx/html:cached
+      - ./volumes/app/nginx_logs:/logs:cached
+    networks:
+      - webcore
+
+
+volumes:
+  pgadmin:
